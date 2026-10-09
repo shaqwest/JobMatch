@@ -20,7 +20,13 @@ async function fetchArbeitnow(): Promise<any[]> {
   }));
 }
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
 Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const key = Deno.env.get("NINE_ROUTER_API_KEY");
   let jobs: any[] = [];
@@ -29,7 +35,6 @@ Deno.serve(async (req) => {
     jobs = a;
   } catch (_) {}
   for (const j of jobs) {
-    const hash = `${j.title}-${j.company}`.toLowerCase();
     const { data: existing } = await supabase.from("jobs").select("id").eq("apply_url", j.apply_url).maybeSingle();
     if (existing) continue;
     let normalized = j;
@@ -72,5 +77,5 @@ Deno.serve(async (req) => {
       website: normalized.website ?? null,
     });
   }
-  return new Response(JSON.stringify({ ingested: jobs.length }), { headers: { "Content-Type": "application/json" } });
+  return new Response(JSON.stringify({ ingested: jobs.length }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 });

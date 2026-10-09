@@ -30,14 +30,25 @@ Deno.serve(async (req) => {
         temperature: 0.6,
       }),
     });
+
+    if (!r.ok) {
+      const errText = await r.text();
+      console.error(`9Router API error: ${r.status} ${errText}`);
+      return new Response(JSON.stringify({ reply: `AI Service Error (${r.status}): ${errText}` }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const jr = await r.json();
     const reply = jr.choices?.[0]?.message?.content ?? "No reply";
     return new Response(JSON.stringify({ reply }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err) {
-    return new Response(JSON.stringify({ reply: `Error connecting to AI: ${err}` }), {
-      status: 500,
+    console.error("Exception:", err);
+    return new Response(JSON.stringify({ reply: `Error connecting to AI: ${err.message}` }), {
+      status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

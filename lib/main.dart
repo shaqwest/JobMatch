@@ -21,7 +21,13 @@ class JobMatchApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: buildTheme(),
       routerConfig: router,
-      builder: (ctx, child) => ChatBubbleOverlay(child: child ?? const SizedBox.shrink()),
+      builder: (ctx, child) => Overlay(
+        initialEntries: [
+          OverlayEntry(
+            builder: (overlayCtx) => ChatBubbleOverlay(child: child ?? const SizedBox.shrink()),
+          ),
+        ],
+      ),
     );
   }
 }
