@@ -1,7 +1,16 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 String _env(String key) {
+  if (key == 'SUPABASE_URL') {
+    const v = String.fromEnvironment('SUPABASE_URL');
+    if (v.isNotEmpty) return v;
+  }
+  if (key == 'SUPABASE_ANON_KEY') {
+    const v = String.fromEnvironment('SUPABASE_ANON_KEY');
+    if (v.isNotEmpty) return v;
+  }
   try {
     if (!dotenv.isInitialized) return '';
     return dotenv.env[key] ?? '';
@@ -21,9 +30,11 @@ bool get isSupabaseConfigured {
 }
 
 Future<void> initSupabase() async {
-  try {
-    await dotenv.load(fileName: '.env');
-  } catch (_) {}
+  if (!kIsWeb) {
+    try {
+      await dotenv.load(fileName: '.env');
+    } catch (_) {}
+  }
   if (!isSupabaseConfigured) return;
   await Supabase.initialize(
     url: _env('SUPABASE_URL'),
