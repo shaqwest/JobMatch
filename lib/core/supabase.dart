@@ -2,8 +2,6 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 String _env(String key) {
-  const fromDefine = String.fromEnvironment(key);
-  if (fromDefine.isNotEmpty) return fromDefine;
   try {
     if (!dotenv.isInitialized) return '';
     return dotenv.env[key] ?? '';
