@@ -46,9 +46,10 @@ class _ChatBubbleOverlayState extends ConsumerState<ChatBubbleOverlay> {
           ),
         if (_open)
           Positioned(
-            left: _pos.dx,
-            top: _pos.dy,
+            left: _pos.dx.clamp(0.0, 1000.0),
+            top: _pos.dy.clamp(0.0, 1000.0),
             child: FocusTraversalGroup(
+              descendantsAreFocusable: true,
               child: GestureDetector(
                 onPanUpdate: (d) => setState(() => _pos += d.delta),
                 child: Material(
