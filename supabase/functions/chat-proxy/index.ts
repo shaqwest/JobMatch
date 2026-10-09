@@ -18,30 +18,40 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const r = await fetch("https://api.9router.com/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({
-        model: "gemini-2.0-flash",
-        messages: [
-          { role: "system", content: "You are JobMatch assistant. Help with job search, CV, and interview prep. Be concise and professional." },
-          { role: "user", content: message },
-        ],
-        temperature: 0.6,
-      }),
-    });
+    const models = ["gemini-2.5-flash", "gemini-2.0-flash"];
+    let reply = "";
+    let lastError = "";
 
-    if (!r.ok) {
-      const errText = await r.text();
-      console.error(`9Router API error: ${r.status} ${errText}`);
-      return new Response(JSON.stringify({ reply: `AI Service Error (${r.status}): ${errText}` }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    for (const model of models) {
+      try {
+        const r = await fetch("https://api.9router.com/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+          body: JSON.stringify({
+            model: model,
+            messages: [
+              { role: "system", content: "You are JobMatch assistant. Help with job search, CV, and interview prep. Be concise and professional." },
+              { role: "user", content: message },
+            ],
+            temperature: 0.6,
+          }),
+        });
+
+        if (r.ok) {
+          const jr = await r.json();
+          reply = jr.choices?.[0]?.message?.content ?? "";
+          if (reply) break;
+        } else {
+          lastError = await r.text();
+        }
+      } catch (e) {
+        lastError = `${e}`;
+      }
     }
 
-    const jr = await r.json();
-    const reply = jr.choices?.[0]?.message?.content ?? "No reply";
+    if (!reply) {
+      reply = lastError ? `AI Error: ${lastError}` : "No reply received from AI.";
+    }
     return new Response(JSON.stringify({ reply }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
