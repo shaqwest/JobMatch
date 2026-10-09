@@ -1,0 +1,24 @@
+project_id = "ffbtsujaqynwmjwzwaxq"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[functions.ingest]
+enabled = true
+verify_jwt = false
+entrypoint = "supabase/functions/ingest/index.ts"
+import_map = ""
+
+[functions.cv-parse]
+enabled = true
+verify_jwt = false
+entrypoint = "supabase/functions/cv-parse/index.ts"
+
+[functions.chat-proxy]
+enabled = true
+verify_jwt = false
+entrypoint = "supabase/functions/chat-proxy/index.ts"

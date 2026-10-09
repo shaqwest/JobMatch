@@ -47,7 +47,6 @@ lib/generated_plugin_registrant.dart
 # Supabase
 supabase/.temp/
 supabase/.branches/
-supabase/config.toml
 
 # Env & secrets
 .env
