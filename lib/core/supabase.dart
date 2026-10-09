@@ -8,7 +8,9 @@ bool get isSupabaseConfigured {
 }
 
 Future<void> initSupabase() async {
-  await dotenv.load(fileName: '.env');
+  try {
+    await dotenv.load(fileName: '.env');
+  } catch (_) {}
   if (!isSupabaseConfigured) return;
   await Supabase.initialize(
     url: dotenv.env['SUPABASE_URL']!,
