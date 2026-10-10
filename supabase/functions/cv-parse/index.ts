@@ -14,9 +14,15 @@ Deno.serve(async (req) => {
     });
   }
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!serviceKey) {
+    return new Response(JSON.stringify({ error: "SUPABASE_SERVICE_ROLE_KEY not set" }), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
   const fileRes = await fetch(`${supabaseUrl}/storage/v1/object/cv_pdfs/${path}`, {
-    headers: { Authorization: `Bearer ${serviceKey}` },
+    headers: { Authorization: `Bearer ${serviceKey}`, apikey: serviceKey },
   });
   if (!fileRes.ok) {
     return new Response(JSON.stringify({ error: "cannot fetch pdf" }), {

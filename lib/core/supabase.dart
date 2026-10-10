@@ -23,7 +23,9 @@ bool get isSupabaseConfigured {
   try {
     final url = _env('SUPABASE_URL');
     final key = _env('SUPABASE_ANON_KEY');
-    return url.isNotEmpty && key.isNotEmpty && url.startsWith('http');
+    final configured = url.isNotEmpty && key.isNotEmpty && url.startsWith('http');
+    if (!configured) debugPrint('Supabase check: URL="$url", Key=${key.isEmpty ? "empty" : "set"}');
+    return configured;
   } catch (_) {
     return false;
   }

@@ -70,3 +70,10 @@ create or replace function update_updated_at() returns trigger as $$
 begin new.updated_at = now(); return new; end; $$ language plpgsql;
 drop trigger if exists profiles_updated_at on profiles;
 create trigger profiles_updated_at before update on profiles for each row execute function update_updated_at();
+
+-- Add storage bucket and policy
+insert into storage.buckets (id, name, public) values ('cv_pdfs', 'cv_pdfs', false) on conflict do nothing;
+
+drop policy if exists "cv_pdfs authenticated" on storage.objects;
+create policy "cv_pdfs authenticated" on storage.objects for all using (bucket_id = 'cv_pdfs' AND auth.role() = 'authenticated') with check (bucket_id = 'cv_pdfs' AND auth.role() = 'authenticated');
+
