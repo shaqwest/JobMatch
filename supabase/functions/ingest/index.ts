@@ -1,7 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const NINE_ROUTER_URL = "https://api.9router.com/v1/chat/completions";
-
 async function fetchArbeitnow(): Promise<any[]> {
   const r = await fetch("https://www.arbeitnow.com/api/job-board-api");
   if (!r.ok) return [];
@@ -29,6 +27,9 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const key = Deno.env.get("NINE_ROUTER_API_KEY");
+  const baseUrl = (Deno.env.get("NINE_ROUTER_BASE_URL") ?? "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, "");
+  const NINE_ROUTER_URL = `${baseUrl}/chat/completions`;
+  
   let jobs: any[] = [];
   try {
     const a = await fetchArbeitnow();

@@ -79,7 +79,8 @@ Deno.serve(async (req) => {
 
   const systemPrompt = `You are a CV parser. Extract fields from the CV text below and return JSON ONLY with keys: full_name,email,phone,location,summary,skills(array of strings),experience(string, concise 2-4 lines),education(string, concise). Use empty string or [] if not found. Do not add markdown.`;
 
-  const r = await fetch("https://api.9router.com/v1/chat/completions", {
+  const base = (Deno.env.get("NINE_ROUTER_BASE_URL") ?? "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, "");
+  const r = await fetch(`${base}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
     body: JSON.stringify({
@@ -93,7 +94,8 @@ Deno.serve(async (req) => {
   });
   if (!r.ok) {
     const t = await r.text();
-    return new Response(JSON.stringify({ error: `AI error ${r.status}: ${t.slice(0, 600)}` }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    const short = t.includes("<!DOCTYPE") ? `HTTP ${r.status}` : t.slice(0, 600);
+    return new Response(JSON.stringify({ error: `AI error ${r.status}: ${short}` }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   const jr = await r.json();
   const content = jr.choices?.[0]?.message?.content ?? "{}";

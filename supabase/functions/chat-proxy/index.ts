@@ -18,17 +18,19 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const models = ["gemini-2.5-flash", "gemini-2.0-flash"];
+    const base = (Deno.env.get("NINE_ROUTER_BASE_URL") ?? "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, "");
+    const url = `${base}/chat/completions`;
+    const models = ["gemini-2.0-flash", "gemini-2.5-flash"];
     let reply = "";
     let lastError = "";
 
     for (const model of models) {
       try {
-        const r = await fetch("https://api.9router.com/chat/completions", {
+        const r = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
           body: JSON.stringify({
-            model: model,
+            model,
             messages: [
               { role: "system", content: "You are JobMatch assistant. Help with job search, CV, and interview prep. Be concise and professional." },
               { role: "user", content: message },
@@ -42,10 +44,12 @@ Deno.serve(async (req) => {
           reply = jr.choices?.[0]?.message?.content ?? "";
           if (reply) break;
         } else {
-          lastError = await r.text();
+          const t = await r.text();
+          const short = t.includes("<!DOCTYPE") ? `HTTP ${r.status} at ${url}` : t.slice(0, 400);
+          lastError = short;
         }
       } catch (e) {
-        lastError = `${e}`;
+        lastError = `${e}`.slice(0, 400);
       }
     }
 
