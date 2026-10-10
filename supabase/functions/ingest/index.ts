@@ -23,13 +23,44 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+async function normalizeWithAI(key: string, base: string, description: string): Promise<string> {
+  const prompt = `Extract JSON only: {"type":"WFO|Remote|Hybrid","employment":"full_time|part_time|contract","contract_duration":null|string,"salary_min":null|int,"salary_max":null|int,"benefits":null|string,"responsibilities":string,"workload":null|string} from: ${description.slice(0, 4000)}`;
+  const url = `${base}/chat/completions`;
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ model: "gemini-2.0-flash", messages: [{ role: "user", content: prompt }], temperature: 0.2 }),
+    });
+    if (resp.ok) {
+      const jr = await resp.json();
+      const c = jr.choices?.[0]?.message?.content ?? jr.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+      if (c) return c;
+    }
+  } catch (_) {}
+  for (const model of ["gemini-2.0-flash", "gemini-1.5-flash"]) {
+    try {
+      const nativeUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+      const r = await fetch(nativeUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+      });
+      if (!r.ok) continue;
+      const jr = await r.json();
+      const text = jr.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text) return text;
+    } catch (_) {}
+  }
+  return "";
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
   const key = Deno.env.get("NINE_ROUTER_API_KEY");
   const baseUrl = (Deno.env.get("NINE_ROUTER_BASE_URL") ?? "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, "");
-  const NINE_ROUTER_URL = `${baseUrl}/chat/completions`;
-  
+
   let jobs: any[] = [];
   try {
     const a = await fetchArbeitnow();
@@ -41,17 +72,7 @@ Deno.serve(async (req) => {
     let normalized = j;
     if (key) {
       try {
-        const resp = await fetch(NINE_ROUTER_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-          body: JSON.stringify({
-            model: "gemini-2.0-flash",
-            messages: [{ role: "user", content: `Extract JSON only: {"type":"WFO|Remote|Hybrid","employment":"full_time|part_time|contract","contract_duration":null|string,"salary_min":null|int,"salary_max":null|int,"benefits":null|string,"responsibilities":string,"workload":null|string} from: ${j.description.slice(0, 4000)}` }],
-            temperature: 0.2,
-          }),
-        });
-        const jr = await resp.json();
-        const content = jr.choices?.[0]?.message?.content ?? jr.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+        const content = await normalizeWithAI(key, baseUrl, j.description);
         const m = content.match(/\{[\s\S]*\}/);
         if (m) {
           const ex = JSON.parse(m[0]);

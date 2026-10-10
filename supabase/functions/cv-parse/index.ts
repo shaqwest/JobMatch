@@ -44,6 +44,55 @@ function extractPdfText(bytes: Uint8Array): string {
   return text.slice(0, 8000);
 }
 
+async function callGemini(key: string, base: string, systemPrompt: string, userContent: string): Promise<string> {
+  const url = `${base}/chat/completions`;
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model: "gemini-2.0-flash",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userContent },
+        ],
+        temperature: 0.1,
+      }),
+    });
+    if (r.ok) {
+      const jr = await r.json();
+      const content = jr.choices?.[0]?.message?.content ?? jr.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+      if (content) return content;
+    } else {
+      console.error(`OpenAI compat failed ${r.status}: ${(await r.text()).slice(0, 300)}`);
+    }
+  } catch (e) {
+    console.error(`OpenAI compat exception: ${e}`);
+  }
+  for (const model of ["gemini-2.0-flash", "gemini-1.5-flash"]) {
+    try {
+      const nativeUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+      const r = await fetch(nativeUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: `${systemPrompt}\n\n${userContent}` }] }],
+        }),
+      });
+      if (!r.ok) {
+        console.error(`Native ${model} failed ${r.status}: ${(await r.text()).slice(0, 300)}`);
+        continue;
+      }
+      const jr = await r.json();
+      const text = jr.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text) return text;
+    } catch (e) {
+      console.error(`Native exception: ${e}`);
+    }
+  }
+  return "";
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   let path = "";
@@ -78,27 +127,11 @@ Deno.serve(async (req) => {
   if (pdfText.length < 20) pdfText = "(no extractable text — PDF may be scanned image)";
 
   const systemPrompt = `You are a CV parser. Extract fields from the CV text below and return JSON ONLY with keys: full_name,email,phone,location,summary,skills(array of strings),experience(string, concise 2-4 lines),education(string, concise). Use empty string or [] if not found. Do not add markdown.`;
-
   const base = (Deno.env.get("NINE_ROUTER_BASE_URL") ?? "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, "");
-  const r = await fetch(`${base}/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-    body: JSON.stringify({
-      model: "gemini-2.0-flash",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: `CV text:\n${pdfText}` },
-      ],
-      temperature: 0.1,
-    }),
-  });
-  if (!r.ok) {
-    const t = await r.text();
-    const short = t.includes("<!DOCTYPE") ? `HTTP ${r.status}` : t.slice(0, 600);
-    return new Response(JSON.stringify({ error: `AI error ${r.status}: ${short}` }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  const content = await callGemini(key, base, systemPrompt, `CV text:\n${pdfText}`);
+  if (!content) {
+    return new Response(JSON.stringify({ error: "AI returned empty response" }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
-  const jr = await r.json();
-  const content = jr.choices?.[0]?.message?.content ?? jr.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
   const m = content.match(/\{[\s\S]*\}/);
   let parsed: Record<string, unknown> = {};
   try {
