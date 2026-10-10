@@ -45,8 +45,9 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
       final fileName = res.files.single.name;
       final user = supabaseOrNull!.auth.currentUser;
       if (user == null) return;
-      await supabaseOrNull!.storage.from('cv_pdfs').uploadBinary('cv/${user.id}/$fileName', bytes);
-      final result = await supabaseOrNull!.functions.invoke('cv-parse', body: {'path': 'cv/${user.id}/$fileName'});
+      final storagePath = '${user.id}/$fileName';
+      await supabaseOrNull!.storage.from('cv_pdfs').uploadBinary(storagePath, bytes, fileOptions: const FileOptions(upsert: true));
+      final result = await supabaseOrNull!.functions.invoke('cv-parse', body: {'path': storagePath});
       final data = result.data as Map<String, dynamic>?;
       if (data != null) {
         ref.read(profileProvider.notifier).fillFromCv(data);
