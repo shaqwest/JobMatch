@@ -24,7 +24,7 @@ Deno.serve(async (req) => {
 
     for (const model of models) {
       try {
-        const r = await fetch("https://api.9router.com/v1/chat/completions", {
+        const r = await fetch("https://api.9router.com/chat/completions", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
           body: JSON.stringify({
