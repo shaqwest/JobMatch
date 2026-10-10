@@ -51,7 +51,7 @@ Deno.serve(async (req) => {
           }),
         });
         const jr = await resp.json();
-        const content = jr.choices?.[0]?.message?.content ?? "";
+        const content = jr.choices?.[0]?.message?.content ?? jr.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
         const m = content.match(/\{[\s\S]*\}/);
         if (m) {
           const ex = JSON.parse(m[0]);

@@ -98,7 +98,7 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ error: `AI error ${r.status}: ${short}` }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   const jr = await r.json();
-  const content = jr.choices?.[0]?.message?.content ?? "{}";
+  const content = jr.choices?.[0]?.message?.content ?? jr.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
   const m = content.match(/\{[\s\S]*\}/);
   let parsed: Record<string, unknown> = {};
   try {
