@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
   try {
     const base = (Deno.env.get("NINE_ROUTER_BASE_URL") ?? "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, "");
     const url = `${base}/chat/completions`;
-    const models = ["gemini-2.0-flash", "gemini-2.5-flash"];
+    const models = ["gemini-2.0-flash", "gemini-1.5-flash"];
     let reply = "";
     let lastError = "";
 
@@ -41,7 +41,11 @@ Deno.serve(async (req) => {
 
         if (r.ok) {
           const jr = await r.json();
-          reply = jr.choices?.[0]?.message?.content ?? "";
+          // Extract reply from standard OpenAI or native Gemini candidates structure
+          reply =
+            jr.choices?.[0]?.message?.content ??
+            jr.candidates?.[0]?.content?.parts?.[0]?.text ??
+            "";
           if (reply) break;
         } else {
           const t = await r.text();
