@@ -21,7 +21,7 @@ class JobMatchApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: buildTheme(),
       routerConfig: router,
-      builder: (ctx, child) => ChatBubbleOverlay(child: child ?? const SizedBox.shrink()),
+      // Removed the builder that was causing the Overlay crash
     );
   }
 }
