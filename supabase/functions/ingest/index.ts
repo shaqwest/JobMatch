@@ -23,34 +23,52 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+async function nativeGenerate(key: string, text: string, model: string): Promise<string> {
+  for (const ver of ["v1beta", "v1"]) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${key}`;
+      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text }] }] }) });
+      if (!r.ok) continue;
+      const jr = await r.json();
+      const out = jr.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (out) return out;
+    } catch (_) {}
+  }
+  return "";
+}
+
+async function discoverModels(key: string): Promise<string[]> {
+  for (const ver of ["v1beta", "v1"]) {
+    try {
+      const r = await fetch(`https://generativelanguage.googleapis.com/${ver}/models?key=${key}`);
+      if (!r.ok) continue;
+      const j = await r.json();
+      const models: any[] = j.models ?? [];
+      const flash = models.filter((m: any) => (m.supportedGenerationMethods ?? []).includes("generateContent")).map((m: any) => (m.name ?? "").replace("models/", "")).filter((n: string) => n && !n.includes("embedding") && !n.includes("image") && !n.includes("veo") && !n.includes("tts"));
+      if (flash.length) return flash;
+    } catch (_) {}
+  }
+  return [];
+}
+
 async function normalizeWithAI(key: string, base: string, description: string): Promise<string> {
   const prompt = `Extract JSON only: {"type":"WFO|Remote|Hybrid","employment":"full_time|part_time|contract","contract_duration":null|string,"salary_min":null|int,"salary_max":null|int,"benefits":null|string,"responsibilities":string,"workload":null|string} from: ${description.slice(0, 4000)}`;
   const url = `${base}/chat/completions`;
-  try {
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({ model: "gemini-2.0-flash", messages: [{ role: "user", content: prompt }], temperature: 0.2 }),
-    });
-    if (resp.ok) {
-      const jr = await resp.json();
-      const c = jr.choices?.[0]?.message?.content ?? jr.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-      if (c) return c;
-    }
-  } catch (_) {}
-  for (const model of ["gemini-2.0-flash", "gemini-1.5-flash"]) {
+  for (const model of ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]) {
     try {
-      const nativeUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
-      const r = await fetch(nativeUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-      });
-      if (!r.ok) continue;
-      const jr = await r.json();
-      const text = jr.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (text) return text;
+      const resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` }, body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], temperature: 0.2 }) });
+      if (resp.ok) {
+        const jr = await resp.json();
+        const c = jr.choices?.[0]?.message?.content ?? jr.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+        if (c) return c;
+      }
     } catch (_) {}
+  }
+  const discovered = await discoverModels(key);
+  const fallback = discovered.length ? discovered : ["gemini-2.5-flash", "gemini-1.5-flash-latest", "gemini-pro"];
+  for (const m of fallback) {
+    const text = await nativeGenerate(key, prompt, m);
+    if (text) return text;
   }
   return "";
 }
