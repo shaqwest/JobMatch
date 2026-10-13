@@ -64,22 +64,42 @@ async function fetchWithTimeout(url: string, options: any, timeout = 10000) {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   const { message } = await req.json().catch(() => ({ message: "" }));
+  // Strip system reminders from user input before processing
+  const cleanMessage = (message ?? "").replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, "").trim();
   const key = Deno.env.get("NINE_ROUTER_API_KEY");
   if (!key) {
     return new Response(JSON.stringify({ reply: "Demo mode: set NINE_ROUTER_API_KEY in Supabase Vault to enable AI." }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   function sanitize(text: string): string {
-    const match = text.match(/<reply>([\s\S]*?)<\/reply>/i);
-    if (match) return match[1].trim();
-    
-    // Fallback: if no tags, try to strip lines that look like AI metadata
-    let t = text.trim();
+    let t = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, "").trim();
     t = t.replace(/```[\s\S]*?```/g, "").trim();
-    const lines = t.split('\n').filter(line => 
-      !/^(Role|Constraint|Instruction|Planning|Output|User says|Draft|Options|Concise):/i.test(line.trim())
-    );
-    return lines.join('\n').trim();
+    const lower = t.toLowerCase();
+    const open = lower.lastIndexOf("<reply>");
+    if (open !== -1) {
+      let after = t.slice(open + 7);
+      const close = after.toLowerCase().indexOf("</reply>");
+      if (close !== -1) after = after.slice(0, close);
+      after = after.trim().replace(/^["'\s]+|["'\s]+$/g, "").trim();
+      if (after) return after;
+    }
+    const m = t.match(/<reply>([\s\S]*?)<\/reply>/i);
+    if (m) return m[1].trim().replace(/^["'\s]+|["'\s]+$/g, "").trim();
+    const leakRe = /(role\s*:|constraint\s*:|function\s*:|user input\s*:|draft\s*\d|concise\?|wrapped in|no reasoning|planning|output)/i;
+    let lines = t.split("\n").filter((l) => {
+      const s = l.replace(/^[\s*\-\•]+/, "").trim();
+      if (!s) return false;
+      if (leakRe.test(s)) return false;
+      if (/^[\*\-\•]\s*(role|constraint|function|instruction|planning|output|user|draft|concise|wrapped|no reasoning)/i.test(s)) return false;
+      return true;
+    });
+    t = lines.join("\n").trim();
+    const quoted = t.match(/"([^"]{12,})"/);
+    if (quoted && !leakRe.test(quoted[1])) return quoted[1].trim();
+    if (t.startsWith('"') && t.endsWith('"')) t = t.slice(1, -1).trim();
+    t = t.replace(/\*\*([^*]+)\*\*/g, "$1").trim();
+    return t.trim();
   }
+// ...
 
   try {
     const sysPrompt = `You are JobMatch, an expert career assistant. 
@@ -104,7 +124,7 @@ Example: <reply>Hello! How can I help you today?</reply>`;
             model,
             messages: [
               { role: "system", content: sysPrompt },
-              { role: "user", content: message },
+              { role: "user", content: cleanMessage },
             ],
             temperature: 0.4,
             max_tokens: 600,
@@ -127,7 +147,7 @@ Example: <reply>Hello! How can I help you today?</reply>`;
       const discovered = await discoverModels(key);
       const candidates = discovered.length ? discovered : ["gemini-2.5-flash", "gemini-2.0-flash"];
       for (const m of candidates) {
-        let text = await nativeGenerate(key, `${sysPrompt}\n\nUser: ${message}`, m);
+        let text = await nativeGenerate(key, `${sysPrompt}\n\nUser: ${cleanMessage}`, m);
         if (text) {
           text = sanitize(text);
           if (text) { reply = text; break; }
