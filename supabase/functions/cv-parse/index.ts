@@ -44,15 +44,46 @@ function extractPdfText(bytes: Uint8Array): string {
   return text.slice(0, 8000);
 }
 
+async function fetchWithTimeout(url: string, options: any, timeout = 8000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const r = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return r;
+  } catch (e) {
+    clearTimeout(id);
+    throw e;
+  }
+}
+
+function migrateHint(body: string): string | null {
+  const m = body.match(/models\/([a-z0-9.\-_]+)/i);
+  if (m && body.toLowerCase().includes("please update")) return m[1];
+  return null;
+}
+
 async function discoverModels(key: string): Promise<string[]> {
   for (const ver of ["v1beta", "v1"]) {
     try {
-      const r = await fetch(`https://generativelanguage.googleapis.com/${ver}/models?key=${key}`);
+      const r = await fetchWithTimeout(`https://generativelanguage.googleapis.com/${ver}/models?key=${key}`, {}, 8000);
       if (!r.ok) continue;
       const j = await r.json();
       const models: any[] = j.models ?? [];
-      const flash = models.filter((m: any) => (m.supportedGenerationMethods ?? []).includes("generateContent")).map((m: any) => (m.name ?? "").replace("models/", "")).filter((n: string) => n && !n.includes("embedding") && !n.includes("image") && !n.includes("veo") && !n.includes("tts"));
-      flash.sort((a: string, b: string) => (a.includes("2.5") ? 3 : a.includes("2.0") ? 2 : 0) - (b.includes("2.5") ? 3 : b.includes("2.0") ? 2 : 0));
+      let flash = models.filter((m: any) => (m.supportedGenerationMethods ?? []).includes("generateContent")).map((m: any) => (m.name ?? "").replace("models/", "")).filter((n: string) => n && !n.includes("embedding") && !n.includes("image") && !n.includes("veo") && !n.includes("tts"));
+      flash = flash.filter((n: string) => !n.includes("computer-use") && !n.startsWith("gemma"));
+      flash.sort((a: string, b: string) => {
+        const rank = (s: string) => {
+          if (s.includes("3.8")) return 10;
+          if (s.includes("3.5")) return 9;
+          if (s.includes("3.1")) return 8;
+          if (s.includes("3.")) return 7;
+          if (s.includes("2.5")) return 3;
+          if (s.includes("2.0")) return 2;
+          return 0;
+        };
+        return rank(b) - rank(a);
+      });
       if (flash.length) return flash;
     } catch (_) {}
   }
@@ -63,8 +94,31 @@ async function nativeGenerate(key: string, text: string, model: string): Promise
   for (const ver of ["v1beta", "v1"]) {
     try {
       const url = `https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${key}`;
-      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text }] }] }) });
-      if (!r.ok) { console.error(`Native ${model} ${ver} ${r.status}: ${(await r.text()).slice(0, 300)}`); continue; }
+      const r = await fetchWithTimeout(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text }] }] }) }, 8000);
+      if (!r.ok) {
+        const t = await r.text();
+        const hint = migrateHint(t);
+        if (hint && hint !== model) {
+          console.error(`Native ${model} ${ver} ${r.status} -> hint ${hint}`);
+          try {
+            const url2 = `https://generativelanguage.googleapis.com/${ver}/models/${hint}:generateContent?key=${key}`;
+            const r2 = await fetchWithTimeout(url2, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text }] }] }) }, 8000);
+            if (r2.ok) {
+              const jr2 = await r2.json();
+              const out2 = jr2.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (out2) return out2;
+            } else {
+              console.error(`Native hint ${hint} ${ver} ${r2.status}: ${(await r2.text()).slice(0, 300)}`);
+            }
+          } catch (e) {
+            console.error(`Native hint ${hint} exception: ${e}`);
+          }
+        } else {
+          console.error(`Native ${model} ${ver} ${r.status}: ${t.slice(0, 300)}`);
+          if (r.status === 429) break;
+        }
+        continue;
+      }
       const jr = await r.json();
       const out = jr.candidates?.[0]?.content?.parts?.[0]?.text;
       if (out) return out;
@@ -76,19 +130,23 @@ async function nativeGenerate(key: string, text: string, model: string): Promise
 async function callGemini(key: string, base: string, systemPrompt: string, userContent: string): Promise<string> {
   const fullPrompt = `${systemPrompt}\n\n${userContent}`;
   const url = `${base}/chat/completions`;
-  const openModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+  const openModels = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview", "google/gemini-3.8-flash"];
   for (const model of openModels) {
     try {
-      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` }, body: JSON.stringify({ model, messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userContent }], temperature: 0.1 }) });
+      const r = await fetchWithTimeout(url, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` }, body: JSON.stringify({ model, messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userContent }], temperature: 0.1 }) }, 8000);
       if (r.ok) {
         const jr = await r.json();
         const content = jr.choices?.[0]?.message?.content ?? jr.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
         if (content) return content;
-      } else { console.error(`OpenAI ${model} failed ${r.status}: ${(await r.text()).slice(0, 300)}`); }
+      } else {
+        const t = await r.text();
+        const hint = migrateHint(t);
+        console.error(`OpenAI ${model} failed ${r.status}${hint ? ` -> hint ${hint}` : ""}: ${t.slice(0, 400)}`);
+      }
     } catch (e) { console.error(`OpenAI ${model} exception: ${e}`); }
   }
   const discovered = await discoverModels(key);
-  const candidates = discovered.length ? discovered : ["gemini-2.5-flash", "gemini-1.5-flash-latest", "gemini-pro"];
+  const candidates = discovered.length ? discovered.slice(0, 3) : ["gemini-3.8-flash", "gemini-3.5-flash-lite"];
   for (const m of candidates) {
     const text = await nativeGenerate(key, fullPrompt, m);
     if (text) { console.log(`CV native success ${m}`); return text; }
@@ -120,7 +178,6 @@ Deno.serve(async (req) => {
   let parsed: Record<string, unknown> = {};
   try { parsed = m ? JSON.parse(m[0]) : {}; } catch (_) { parsed = { _raw: content.slice(0, 1000) }; }
 
-  // Automatically save parsed data and path to user's profile table if service role is available
   if (supabaseUrl && serviceKey) {
     try {
       const userId = path.split('/')[0];
@@ -130,15 +187,12 @@ Deno.serve(async (req) => {
           cv_url: path,
           cv_parsed: parsed,
         };
-        
-        // Map fields explicitly
         const fields = ['full_name', 'email', 'phone', 'location', 'summary', 'skills', 'experience', 'education'];
         for (const f of fields) {
           if (parsed[f] !== undefined && parsed[f] !== null) {
             updatePayload[f] = parsed[f];
           }
         }
-
         const res = await fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${userId}`, {
           method: "PATCH",
           headers: {
