@@ -7,37 +7,36 @@ class ChatMessage {
   const ChatMessage(this.role, this.content);
 }
 
-class ChatNotifier extends StateNotifier<List<ChatMessage>> {
-  ChatNotifier() : super(const []);
-  bool _sending = false;
-  bool get sending => _sending;
+class ChatState {
+  final List<ChatMessage> messages;
+  final bool sending;
+  const ChatState({this.messages = const [], this.sending = false});
+  ChatState copyWith({List<ChatMessage>? messages, bool? sending}) =>
+      ChatState(messages: messages ?? this.messages, sending: sending ?? this.sending);
+}
+
+class ChatNotifier extends StateNotifier<ChatState> {
+  ChatNotifier() : super(const ChatState());
 
   Future<void> send(String text) async {
-    if (text.trim().isEmpty || _sending) return;
-    state = [...state, ChatMessage('user', text.trim())];
-    _sending = true;
-    notifyListeners(); // Ensure UI knows we are sending
+    if (text.trim().isEmpty || state.sending) return;
+    state = state.copyWith(messages: [...state.messages, ChatMessage('user', text.trim())], sending: true);
     try {
       final c = supabaseOrNull;
       if (c != null && isSupabaseConfigured) {
-        final res = await c.functions.invoke(
-          'chat-proxy', 
-          body: {'message': text},
-        ).timeout(const Duration(seconds: 25)); // Client side timeout
+        final res = await c.functions.invoke('chat-proxy', body: {'message': text}).timeout(const Duration(seconds: 25));
         final reply = (res.data is Map ? res.data['reply'] : null)?.toString() ?? 'No reply';
-        state = [...state, ChatMessage('assistant', reply)];
+        state = state.copyWith(messages: [...state.messages, ChatMessage('assistant', reply)], sending: false);
       } else {
         await Future.delayed(const Duration(milliseconds: 700));
-        state = [...state, const ChatMessage('assistant', 'Demo mode: connect Supabase + 9Router to enable AI. Ask about jobs, CV, or interview prep.')];
+        state = state.copyWith(messages: [...state.messages, const ChatMessage('assistant', 'Demo mode: connect Supabase + 9Router to enable AI. Ask about jobs, CV, or interview prep.')], sending: false);
       }
     } catch (e) {
-      state = [...state, ChatMessage('assistant', 'Error: $e')];
-    } finally {
-      _sending = false;
+      state = state.copyWith(messages: [...state.messages, ChatMessage('assistant', 'Error: $e')], sending: false);
     }
   }
 
-  void clear() => state = [];
+  void clear() => state = const ChatState();
 }
 
-final chatProvider = StateNotifierProvider<ChatNotifier, List<ChatMessage>>((_) => ChatNotifier());
+final chatProvider = StateNotifierProvider<ChatNotifier, ChatState>((_) => ChatNotifier());

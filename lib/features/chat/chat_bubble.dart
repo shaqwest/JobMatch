@@ -29,7 +29,9 @@ class _ChatBubbleOverlayState extends ConsumerState<ChatBubbleOverlay> {
 
   @override
   Widget build(BuildContext context) {
-    final messages = ref.watch(chatProvider);
+    final chatState = ref.watch(chatProvider);
+    final messages = chatState.messages;
+    final sending = chatState.sending;
     final size = MediaQuery.of(context).size;
     final left = _pos.dx.clamp(0.0, (size.width - 348).clamp(0.0, double.infinity));
     final top = _pos.dy.clamp(0.0, (size.height - 432).clamp(0.0, double.infinity));
@@ -78,7 +80,7 @@ class _ChatBubbleOverlayState extends ConsumerState<ChatBubbleOverlay> {
                         ]),
                       ),
                     ),
-                    if (!_minimized) ...[
+                    if (!_minimized)
                       Expanded(
                         child: SelectionArea(
                           child: ListView.builder(
@@ -88,33 +90,28 @@ class _ChatBubbleOverlayState extends ConsumerState<ChatBubbleOverlay> {
                             itemBuilder: (_, i) {
                               if (messages.isEmpty) return Text('Ask about jobs, CV tips, or interview prep.', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: const Color(0xFF71717A)));
                               final m = messages[i];
-                                final isUser = m.role == 'user';
-                                return Align(
-                                  alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-                                  child: Column(
-                                    crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                                    children: [
-                                      Container(
-                                        margin: const EdgeInsets.only(bottom: 8),
-                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                                        constraints: const BoxConstraints(maxWidth: 260),
-                                        decoration: BoxDecoration(color: isUser ? const Color(0xFF09090B) : const Color(0xFFF4F4F5), borderRadius: BorderRadius.circular(12), border: isUser ? null : Border.all(color: const Color(0xFFE4E4E7))),
-                                        child: SelectableText(m.content, style: TextStyle(fontSize: 13, color: isUser ? Colors.white : const Color(0xFF27272A))),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
-                            ),
+                              final isUser = m.role == 'user';
+                              return Align(
+                                alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+                                child: Container(
+                                  margin: const EdgeInsets.only(bottom: 8),
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                  constraints: const BoxConstraints(maxWidth: 260),
+                                  decoration: BoxDecoration(color: isUser ? const Color(0xFF09090B) : const Color(0xFFF4F4F5), borderRadius: BorderRadius.circular(12), border: isUser ? null : Border.all(color: const Color(0xFFE4E4E7))),
+                                  child: SelectableText(m.content, style: TextStyle(fontSize: 13, color: isUser ? Colors.white : const Color(0xFF27272A))),
+                                ),
+                              );
+                            },
                           ),
                         ),
                       ),
-                      if (ref.watch(chatProvider.notifier).sending)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                          child: Text('Thinking...', style: Theme.of(context).textTheme.labelSmall?.copyWith(color: const Color(0xFF71717A))),
-                        ),
-                      const Divider(height: 1),
+                    if (!_minimized && sending)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                        child: Align(alignment: Alignment.centerLeft, child: Text('Thinking...', style: Theme.of(context).textTheme.labelSmall?.copyWith(color: const Color(0xFF71717A)))),
+                      ),
+                    if (!_minimized) const Divider(height: 1),
+                    if (!_minimized)
                       Padding(
                         padding: const EdgeInsets.all(8),
                         child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
@@ -123,7 +120,6 @@ class _ChatBubbleOverlayState extends ConsumerState<ChatBubbleOverlay> {
                           FilledButton(onPressed: _send, style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10)), child: const Icon(Icons.send, size: 16)),
                         ]),
                       ),
-                    ],
                   ],
                 ),
               ),
