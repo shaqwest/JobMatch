@@ -92,8 +92,7 @@ RULES:
 Example: <reply>Hello! How can I help you today?</reply>`;
     const base = (Deno.env.get("NINE_ROUTER_BASE_URL") ?? "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, "");
     const url = `${base}/chat/completions`;
-    // Reduced to 2 most reliable models for faster failover
-    const openModels = ["gemini-2.0-flash", "gemini-1.5-flash"];
+    const openModels = ["gemini-2.5-flash", "gemini-2.0-flash", "google/gemini-2.5-flash"];
     let reply = "";
     let lastError = "";
     for (const model of openModels) {
@@ -110,31 +109,29 @@ Example: <reply>Hello! How can I help you today?</reply>`;
             temperature: 0.4,
             max_tokens: 600,
           }),
-        }, 12000); // 12s timeout per attempt
+        }, 12000); 
         if (r.ok) {
           const jr = await r.json();
           let text: string = jr.choices?.[0]?.message?.content ?? jr.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
           if (text) { text = sanitize(text); if (text) { reply = text; break; } }
-          lastError = `OpenAI ${model} 200 no text: ${JSON.stringify(jr).slice(0, 200)}`;
+          lastError = `OpenAI ${model} 200 no text`;
         } else {
-          const t = await r.text();
-          lastError = t.includes("<!DOCTYPE") ? `HTTP ${r.status} at ${url}` : t.slice(0, 400);
+          lastError = `HTTP ${r.status} at ${url}`;
         }
       } catch (e) {
         lastError = `${e}`.slice(0, 400);
       }
     }
     if (!reply) {
-      console.log("OpenAI compat yielded no reply, trying direct native fallback...");
-      const fallbackModel = "gemini-1.5-flash";
-      try {
-        let text = await nativeGenerate(key, `${sysPrompt}\n\nUser: ${message}`, fallbackModel);
+      console.log("Compat proxy failed, trying native discovery...");
+      const discovered = await discoverModels(key);
+      const candidates = discovered.length ? discovered : ["gemini-2.5-flash", "gemini-2.0-flash"];
+      for (const m of candidates) {
+        let text = await nativeGenerate(key, `${sysPrompt}\n\nUser: ${message}`, m);
         if (text) {
           text = sanitize(text);
-          if (text) reply = text;
+          if (text) { reply = text; break; }
         }
-      } catch (e) {
-        console.error(`Fallback failed: ${e}`);
       }
     }
     if (!reply) reply = lastError ? `AI Error: ${lastError}` : "No reply received from AI.";
