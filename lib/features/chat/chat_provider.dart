@@ -24,7 +24,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     try {
       final c = supabaseOrNull;
       if (c != null && isSupabaseConfigured) {
-        final res = await c.functions.invoke('chat-proxy', body: {'message': text}).timeout(const Duration(seconds: 25));
+        final res = await c.functions.invoke('chat-proxy', body: {'message': text}).timeout(const Duration(seconds: 40));
         final reply = (res.data is Map ? res.data['reply'] : null)?.toString() ?? 'No reply';
         state = state.copyWith(messages: [...state.messages, ChatMessage('assistant', reply)], sending: false);
       } else {
