@@ -31,7 +31,7 @@ async function nativeGenerate(key: string, text: string, model: string): Promise
       const r = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text }] }] }),
+        body: JSON.stringify({ contents: [{ parts: [{ text }] }], generationConfig: { temperature: 0.4, maxOutputTokens: 600 } }),
       });
       if (!r.ok) {
         const t = await r.text();
@@ -48,6 +48,19 @@ async function nativeGenerate(key: string, text: string, model: string): Promise
   return "";
 }
 
+async function fetchWithTimeout(url: string, options: any, timeout = 10000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return response;
+  } catch (e) {
+    clearTimeout(id);
+    throw e;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   const { message } = await req.json().catch(() => ({ message: "" }));
@@ -55,30 +68,64 @@ Deno.serve(async (req) => {
   if (!key) {
     return new Response(JSON.stringify({ reply: "Demo mode: set NINE_ROUTER_API_KEY in Supabase Vault to enable AI." }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
+  function sanitize(text: string): string {
+    let t = text.trim();
+    t = t.replace(/```[\s\S]*?```/g, "").trim();
+    t = t.replace(/^\s*```.*$/gm, "").trim();
+    const leakRe = /(role\s*:|constraint\s*:|persona\s*:|option\s*\d|user\s*says\s*:|be concise|acknowledge greeting|state purpose)/i;
+    let lines = t.split("\n");
+    const hasLeak = lines.some((l) => leakRe.test(l));
+    if (hasLeak) {
+      lines = lines.filter((l) => !leakRe.test(l));
+      lines = lines.filter((l) => {
+        const low = l.trim().toLowerCase();
+        if (!low) return false;
+        if (/^[\*\-\•]\s*(role|constraint|persona|option|style|input|capa)/i.test(low)) return false;
+        return true;
+      });
+      t = lines.join("\n").trim();
+      const quoted = t.match(/"([^"]{10,})"/);
+      if (quoted && !leakRe.test(quoted[1])) t = quoted[1];
+    } else {
+      t = lines.filter((l) => {
+        const low = l.trim().toLowerCase();
+        if (/^[\*\-\•]\s*(role|constraint|persona|option)/i.test(low)) return false;
+        return true;
+      }).join("\n").trim();
+    }
+    if (t.startsWith('"') && t.endsWith('"') && t.length > 2) t = t.slice(1, -1).trim();
+    t = t.replace(/\*\*([^*]+)\*\*/g, "$1").trim();
+    t = t.replace(/^\s*[\*\-\•]\s+/gm, "").trim();
+    return t.trim();
+  }
+
   try {
+    const sysPrompt = "You are JobMatch, a helpful AI career assistant. Your purpose is to assist users with job searches, CV optimization, and interview preparation. Output ONLY the response meant for the user. Do not include internal thoughts, reasoning steps, or prompt tags like 'User says:' or 'Role:'. Keep your answers natural, friendly, and concise (1-3 sentences unless asked for details).";
     const base = (Deno.env.get("NINE_ROUTER_BASE_URL") ?? "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, "");
     const url = `${base}/chat/completions`;
-    const openModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.0-flash-exp", "gemini-3-flash-preview"];
+    // Reduced to 2 most reliable models for faster failover
+    const openModels = ["gemini-2.0-flash", "gemini-1.5-flash"];
     let reply = "";
     let lastError = "";
     for (const model of openModels) {
       try {
-        const r = await fetch(url, {
+        const r = await fetchWithTimeout(url, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
           body: JSON.stringify({
             model,
             messages: [
-              { role: "system", content: "You are JobMatch assistant. Help with job search, CV, and interview prep. Be concise and professional." },
+              { role: "system", content: sysPrompt },
               { role: "user", content: message },
             ],
-            temperature: 0.6,
+            temperature: 0.4,
+            max_tokens: 600,
           }),
-        });
+        }, 12000); // 12s timeout per attempt
         if (r.ok) {
           const jr = await r.json();
-          const text = jr.choices?.[0]?.message?.content ?? jr.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-          if (text) { reply = text; break; }
+          let text: string = jr.choices?.[0]?.message?.content ?? jr.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+          if (text) { text = sanitize(text); if (text) { reply = text; break; } }
           lastError = `OpenAI ${model} 200 no text: ${JSON.stringify(jr).slice(0, 200)}`;
         } else {
           const t = await r.text();
@@ -89,16 +136,20 @@ Deno.serve(async (req) => {
       }
     }
     if (!reply) {
-      console.log("OpenAI compat yielded no reply, discovering native models...");
-      const discovered = await discoverModels(key);
-      const candidates = discovered.length ? discovered : ["gemini-2.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro", "gemini-pro", "gemini-2.0-flash-exp"];
-      const prompt = `You are JobMatch assistant. Help with job search, CV, and interview prep. Be concise.\n\nUser: ${message}`;
-      for (const m of candidates) {
-        const text = await nativeGenerate(key, prompt, m);
-        if (text) { reply = text; console.log(`Native success with ${m}`); break; }
+      console.log("OpenAI compat yielded no reply, trying direct native fallback...");
+      const fallbackModel = "gemini-1.5-flash";
+      try {
+        let text = await nativeGenerate(key, `${sysPrompt}\n\nUser: ${message}`, fallbackModel);
+        if (text) {
+          text = sanitize(text);
+          if (text) reply = text;
+        }
+      } catch (e) {
+        console.error(`Fallback failed: ${e}`);
       }
     }
     if (!reply) reply = lastError ? `AI Error: ${lastError}` : "No reply received from AI.";
+    else reply = sanitize(reply);
     return new Response(JSON.stringify({ reply }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (err: any) {
     console.error("Exception:", err);

@@ -112,12 +112,52 @@ Deno.serve(async (req) => {
   if (bytes.length < 10) return new Response(JSON.stringify({ error: "pdf empty" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   let pdfText = extractPdfText(bytes);
   if (pdfText.length < 20) pdfText = "(no extractable text — PDF may be scanned image)";
-  const systemPrompt = `You are a CV parser. Extract fields from the CV text below and return JSON ONLY with keys: full_name,email,phone,location,summary,skills(array of strings),experience(string, concise 2-4 lines),education(string, concise). Use empty string or [] if not found. Do not add markdown.`;
+  const systemPrompt = `You are a CV parser. Extract fields from the CV text below and return JSON ONLY with keys: full_name,email,phone,location,headline(short professional title, e.g. "Senior Mobile Developer | Flutter"),summary(1-2 sentences),skills(array of strings),experience(array of objects with keys: id, company, title, duration, points(array of 2-3 achievement bullets), is_current(boolean)),education(string, concise). Use empty string or [] if not found. Do not add markdown. Example experience: [{"id":"1","company":"TechNova","title":"Lead Mobile Engineer","duration":"Oct 2021 - Present","points":["Shipped Flutter app to 2M users","Led team of 4"],"is_current":true}]`;
   const base = (Deno.env.get("NINE_ROUTER_BASE_URL") ?? "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, "");
   const content = await callGemini(key, base, systemPrompt, `CV text:\n${pdfText}`);
   if (!content) return new Response(JSON.stringify({ error: "AI returned empty response" }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   const m = content.match(/\{[\s\S]*\}/);
   let parsed: Record<string, unknown> = {};
   try { parsed = m ? JSON.parse(m[0]) : {}; } catch (_) { parsed = { _raw: content.slice(0, 1000) }; }
+
+  // Automatically save parsed data and path to user's profile table if service role is available
+  if (supabaseUrl && serviceKey) {
+    try {
+      const userId = path.split('/')[0];
+      if (userId) {
+        console.log(`Saving parsed CV for user: ${userId}`);
+        const updatePayload: Record<string, any> = {
+          cv_url: path,
+          cv_parsed: parsed,
+        };
+        
+        // Map fields explicitly
+        const fields = ['full_name', 'email', 'phone', 'location', 'summary', 'skills', 'experience', 'education'];
+        for (const f of fields) {
+          if (parsed[f] !== undefined && parsed[f] !== null) {
+            updatePayload[f] = parsed[f];
+          }
+        }
+
+        const res = await fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${userId}`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            "apikey": serviceKey,
+            "Authorization": `Bearer ${serviceKey}`,
+            "Prefer": "return=minimal"
+          },
+          body: JSON.stringify(updatePayload)
+        });
+        if (!res.ok) {
+          const err = await res.text();
+          console.error(`DB Update failed: ${res.status} - ${err}`);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to auto-save parsed CV to profile:", e);
+    }
+  }
+
   return new Response(JSON.stringify(parsed), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
 });

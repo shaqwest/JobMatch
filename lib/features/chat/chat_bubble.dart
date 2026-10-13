@@ -88,21 +88,32 @@ class _ChatBubbleOverlayState extends ConsumerState<ChatBubbleOverlay> {
                             itemBuilder: (_, i) {
                               if (messages.isEmpty) return Text('Ask about jobs, CV tips, or interview prep.', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: const Color(0xFF71717A)));
                               final m = messages[i];
-                              final isUser = m.role == 'user';
-                              return Align(
-                                alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-                                child: Container(
-                                  margin: const EdgeInsets.only(bottom: 8),
-                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                                  constraints: const BoxConstraints(maxWidth: 260),
-                                  decoration: BoxDecoration(color: isUser ? const Color(0xFF09090B) : const Color(0xFFF4F4F5), borderRadius: BorderRadius.circular(12), border: isUser ? null : Border.all(color: const Color(0xFFE4E4E7))),
-                                  child: SelectableText(m.content, style: TextStyle(fontSize: 13, color: isUser ? Colors.white : const Color(0xFF27272A))),
-                                ),
-                              );
-                            },
+                                final isUser = m.role == 'user';
+                                return Align(
+                                  alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+                                  child: Column(
+                                    crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                                    children: [
+                                      Container(
+                                        margin: const EdgeInsets.only(bottom: 8),
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                        constraints: const BoxConstraints(maxWidth: 260),
+                                        decoration: BoxDecoration(color: isUser ? const Color(0xFF09090B) : const Color(0xFFF4F4F5), borderRadius: BorderRadius.circular(12), border: isUser ? null : Border.all(color: const Color(0xFFE4E4E7))),
+                                        child: SelectableText(m.content, style: TextStyle(fontSize: 13, color: isUser ? Colors.white : const Color(0xFF27272A))),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
                           ),
                         ),
                       ),
+                      if (ref.watch(chatProvider.notifier).sending)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                          child: Text('Thinking...', style: Theme.of(context).textTheme.labelSmall?.copyWith(color: const Color(0xFF71717A))),
+                        ),
                       const Divider(height: 1),
                       Padding(
                         padding: const EdgeInsets.all(8),

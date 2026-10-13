@@ -86,6 +86,9 @@ class JobsNotifier extends StateNotifier<JobsState> {
     if (state.loading) return;
     state = state.copyWith(loading: true);
     try {
+      // Reload profile to ensure skills are current
+      await ref.read(profileProvider.notifier).reload();
+      
       List<Job> fetched = [];
       final c = supabaseOrNull;
       if (c != null && isSupabaseConfigured) {
@@ -103,7 +106,12 @@ class JobsNotifier extends StateNotifier<JobsState> {
       if (skills.isNotEmpty) {
         fetched = fetched.map((j) => j.copyWithMatch(_tfidfScore(j, skills))).toList();
       }
-      final filtered = _applyFilters(fetched, state.filters);
+      // Ensure we sort by match if user has skills
+      var effectiveFilters = state.filters;
+      if (skills.isNotEmpty && state.filters.sortField == SortField.postedAt) {
+          effectiveFilters = effectiveFilters.copyWith(sortField: SortField.match, sortOrder: SortOrder.desc);
+      }
+      final filtered = _applyFilters(fetched, effectiveFilters);
       final page = refresh ? 0 : state.page;
       final visible = filtered.take((page + 1) * jobsPageSize).toList();
       state = state.copyWith(
@@ -112,6 +120,7 @@ class JobsNotifier extends StateNotifier<JobsState> {
         page: page,
         hasMore: visible.length < filtered.length,
         loading: false,
+        filters: effectiveFilters,
       );
     } catch (_) {
       state = state.copyWith(loading: false);

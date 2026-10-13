@@ -16,10 +16,14 @@ class ChatNotifier extends StateNotifier<List<ChatMessage>> {
     if (text.trim().isEmpty || _sending) return;
     state = [...state, ChatMessage('user', text.trim())];
     _sending = true;
+    notifyListeners(); // Ensure UI knows we are sending
     try {
       final c = supabaseOrNull;
       if (c != null && isSupabaseConfigured) {
-        final res = await c.functions.invoke('chat-proxy', body: {'message': text});
+        final res = await c.functions.invoke(
+          'chat-proxy', 
+          body: {'message': text},
+        ).timeout(const Duration(seconds: 25)); // Client side timeout
         final reply = (res.data is Map ? res.data['reply'] : null)?.toString() ?? 'No reply';
         state = [...state, ChatMessage('assistant', reply)];
       } else {

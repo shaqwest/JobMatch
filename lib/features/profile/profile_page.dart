@@ -2,7 +2,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/supabase.dart';
+import '../../widgets/timeline_item.dart';
 import 'profile_provider.dart';
 
 class ProfilePage extends ConsumerStatefulWidget {
@@ -12,23 +14,20 @@ class ProfilePage extends ConsumerStatefulWidget {
   ConsumerState<ProfilePage> createState() => _ProfilePageState();
 }
 
-class _ProfilePageState extends ConsumerState<ProfilePage> {
-  late final _name = TextEditingController(text: ref.read(profileProvider).fullName);
-  late final _email = TextEditingController(text: ref.read(profileProvider).email);
-  late final _phone = TextEditingController(text: ref.read(profileProvider).phone);
-  late final _location = TextEditingController(text: ref.read(profileProvider).location);
-  late final _summary = TextEditingController(text: ref.read(profileProvider).summary);
-  late final _skills = TextEditingController(text: ref.read(profileProvider).skills.join(', '));
-  late final _exp = TextEditingController(text: ref.read(profileProvider).experience);
-  late final _edu = TextEditingController(text: ref.read(profileProvider).education);
-  String _prefType = 'Any';
-  bool _saving = false;
+class _ProfilePageState extends ConsumerState<ProfilePage> with SingleTickerProviderStateMixin {
+  late final TabController _tabController;
   bool _parsing = false;
 
   @override
   void initState() {
     super.initState();
-    _prefType = ref.read(profileProvider).prefType;
+    _tabController = TabController(length: 3, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   Future<void> _pickCv() async {
@@ -39,105 +38,196 @@ class _ProfilePageState extends ConsumerState<ProfilePage> {
       final bytes = res.files.single.bytes;
       if (bytes == null) return;
       if (!isSupabaseConfigured) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Demo: CV parsed locally. Fill manually for now.')));
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Demo: CV parsed locally.')));
         return;
       }
       final fileName = res.files.single.name;
       final user = supabaseOrNull!.auth.currentUser;
       if (user == null) return;
       final storagePath = '${user.id}/$fileName';
-      await supabaseOrNull!.storage.from('cv_pdfs').uploadBinary(storagePath, bytes, fileOptions: FileOptions(upsert: true));
+      await supabaseOrNull!.storage.from('cv_pdfs').uploadBinary(
+        storagePath,
+        bytes,
+        fileOptions: FileOptions(contentType: 'application/pdf', upsert: true),
+      );
       final result = await supabaseOrNull!.functions.invoke('cv-parse', body: {'path': storagePath});
-      final data = result.data as Map<String, dynamic>?;
-      if (data != null) {
-        ref.read(profileProvider.notifier).fillFromCv(data);
-        final p = ref.read(profileProvider);
-        _name.text = p.fullName;
-        _email.text = p.email;
-        _phone.text = p.phone;
-        _location.text = p.location;
-        _summary.text = p.summary;
-        _skills.text = p.skills.join(', ');
-        _exp.text = p.experience;
-        _edu.text = p.education;
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('CV parsed — review and save')));
+      if (result.data != null && result.data is Map) {
+        await ref.read(profileProvider.notifier).reload();
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Profile updated from CV')));
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('CV parse failed: $e')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
     } finally {
       if (mounted) setState(() => _parsing = false);
     }
   }
 
-  Future<void> _save() async {
-    setState(() => _saving = true);
-    final skills = _skills.text.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
-    ref.read(profileProvider.notifier).update(ref.read(profileProvider).copyWith(
-          fullName: _name.text.trim(),
-          email: _email.text.trim(),
-          phone: _phone.text.trim(),
-          location: _location.text.trim(),
-          summary: _summary.text.trim(),
-          skills: skills,
-          experience: _exp.text.trim(),
-          education: _edu.text.trim(),
-          prefType: _prefType,
-        ));
-    await ref.read(profileProvider.notifier).save();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Profile saved')));
-      context.go('/jobs');
-    }
-    if (mounted) setState(() => _saving = false);
-  }
-
   @override
   Widget build(BuildContext context) {
+    final profile = ref.watch(profileProvider);
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Your profile'), actions: [
-        TextButton(onPressed: () => context.go('/jobs'), child: const Text('Skip')),
-      ]),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(border: Border.all(color: const Color(0xFFE4E4E7)), borderRadius: BorderRadius.circular(8)),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Upload CV', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
-              const SizedBox(height: 4),
-              Text('PDF only. We extract and prefill — you edit.', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: const Color(0xFF71717A))),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(onPressed: _parsing ? null : _pickCv, icon: _parsing ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.upload_file, size: 18), label: Text(_parsing ? 'Parsing' : 'Choose PDF')),
-            ]),
+      backgroundColor: const Color(0xFFF8FAFC),
+      body: CustomScrollView(
+        slivers: [
+          SliverAppBar(
+            backgroundColor: Colors.white,
+            elevation: 0,
+            pinned: true,
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back, color: Color(0xFF1E293B)),
+              onPressed: () => context.go('/jobs'),
+            ),
+            title: const Text('My Profile', style: TextStyle(color: Color(0xFF1E293B), fontSize: 16, fontWeight: FontWeight.w600)),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.upload_file, color: Color(0xFF2563EB)),
+                tooltip: 'Upload CV',
+                onPressed: _parsing ? null : _pickCv,
+              ),
+            ],
           ),
-          const SizedBox(height: 16),
-          TextField(controller: _name, decoration: const InputDecoration(labelText: 'Full name')),
-          const SizedBox(height: 12),
-          TextField(controller: _email, decoration: const InputDecoration(labelText: 'Email')),
-          const SizedBox(height: 12),
-          TextField(controller: _phone, decoration: const InputDecoration(labelText: 'Phone')),
-          const SizedBox(height: 12),
-          TextField(controller: _location, decoration: const InputDecoration(labelText: 'Location (e.g. Jakarta, Indonesia)')),
-          const SizedBox(height: 12),
-          TextField(controller: _summary, decoration: const InputDecoration(labelText: 'Summary'), maxLines: 3),
-          const SizedBox(height: 12),
-          TextField(controller: _skills, decoration: const InputDecoration(labelText: 'Skills (comma separated)', hintText: 'Flutter, Dart, SQL')),
-          const SizedBox(height: 12),
-          TextField(controller: _exp, decoration: const InputDecoration(labelText: 'Experience'), maxLines: 3),
-          const SizedBox(height: 12),
-          TextField(controller: _edu, decoration: const InputDecoration(labelText: 'Education'), maxLines: 2),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            value: _prefType,
-            decoration: const InputDecoration(labelText: 'Preferred type'),
-            items: const ['Any', 'WFO', 'Remote', 'Hybrid'].map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-            onChanged: (v) => setState(() => _prefType = v ?? 'Any'),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                children: [
+                  // Avatar
+                  const CircleAvatar(
+                    radius: 40,
+                    backgroundColor: Color(0xFFE2E8F0),
+                    child: Icon(Icons.person, size: 40, color: Color(0xFF64748B)),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    profile.fullName.isEmpty ? 'Your Name' : profile.fullName,
+                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    profile.headline.isEmpty ? 'Mobile Developer | Flutter' : profile.headline,
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: Color(0xFF64748B)),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.location_on_outlined, size: 14, color: Color(0xFF64748B)),
+                      const SizedBox(width: 4),
+                      Text(profile.location.isEmpty ? 'Location' : profile.location, style: const TextStyle(fontSize: 13, color: Color(0xFF64748B))),
+                      const SizedBox(width: 16),
+                      const Icon(Icons.email_outlined, size: 14, color: Color(0xFF64748B)),
+                      const SizedBox(width: 4),
+                      Text(profile.email.isEmpty ? 'email@domain.com' : profile.email, style: const TextStyle(fontSize: 13, color: Color(0xFF64748B))),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  // Verification Badge
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFDCFCE7),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: const [
+                        Icon(Icons.auto_awesome, size: 14, color: Color(0xFF166534)),
+                        SizedBox(width: 6),
+                        Text(
+                          'Profile auto-generated from CV',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF166534)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
-          const SizedBox(height: 20),
-          FilledButton(onPressed: _saving ? null : _save, child: Text(_saving ? 'Saving' : 'Save and see jobs')),
+          SliverPersistentHeader(
+            pinned: true,
+            delegate: _SliverAppBarDelegate(
+              TabBar(
+                controller: _tabController,
+                labelColor: const Color(0xFF2563EB),
+                unselectedLabelColor: const Color(0xFF64748B),
+                indicatorColor: const Color(0xFF2563EB),
+                indicatorWeight: 3,
+                tabs: const [
+                  Tab(text: 'Experience'),
+                  Tab(text: 'Skills'),
+                  Tab(text: 'Education'),
+                ],
+              ),
+            ),
+          ),
+          SliverFillRemaining(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                // Experience Tab
+                profile.experience.isEmpty
+                    ? const Center(child: Text('No experience listed. Upload your CV to populate.', style: TextStyle(color: Color(0xFF64748B))))
+                    : ListView.builder(
+                        padding: const EdgeInsets.only(top: 24),
+                        itemCount: profile.experience.length,
+                        itemBuilder: (context, index) {
+                          return TimelineItem(
+                            experience: profile.experience[index],
+                            isLast: index == profile.experience.length - 1,
+                          );
+                        },
+                      ),
+                // Skills Tab
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: profile.skills.isEmpty
+                      ? const Center(child: Text('No skills listed.', style: TextStyle(color: Color(0xFF64748B))))
+                      : Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: profile.skills.map((s) => Chip(
+                                label: Text(s),
+                                backgroundColor: Colors.white,
+                                labelStyle: const TextStyle(color: Color(0xFF1E293B)),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: const BorderSide(color: Color(0xFFE2E8F0))),
+                              )).toList(),
+                        ),
+                ),
+                // Education Tab
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(profile.education.isEmpty ? 'No education listed.' : profile.education, style: const TextStyle(fontSize: 14, color: Color(0xFF1E293B))),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
+}
+
+class _SliverAppBarDelegate extends SliverPersistentHeaderDelegate {
+  final TabBar _tabBar;
+
+  _SliverAppBarDelegate(this._tabBar);
+
+  @override
+  double get minExtent => _tabBar.preferredSize.height;
+
+  @override
+  double get maxExtent => _tabBar.preferredSize.height;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return Container(
+      color: Colors.white,
+      child: _tabBar,
+    );
+  }
+
+  @override
+  bool shouldRebuild(covariant SliverPersistentHeaderDelegate oldDelegate) => false;
 }
