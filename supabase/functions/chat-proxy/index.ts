@@ -69,38 +69,27 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ reply: "Demo mode: set NINE_ROUTER_API_KEY in Supabase Vault to enable AI." }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   function sanitize(text: string): string {
+    const match = text.match(/<reply>([\s\S]*?)<\/reply>/i);
+    if (match) return match[1].trim();
+    
+    // Fallback: if no tags, try to strip lines that look like AI metadata
     let t = text.trim();
     t = t.replace(/```[\s\S]*?```/g, "").trim();
-    t = t.replace(/^\s*```.*$/gm, "").trim();
-    const leakRe = /(role\s*:|constraint\s*:|persona\s*:|option\s*\d|user\s*says\s*:|be concise|acknowledge greeting|state purpose)/i;
-    let lines = t.split("\n");
-    const hasLeak = lines.some((l) => leakRe.test(l));
-    if (hasLeak) {
-      lines = lines.filter((l) => !leakRe.test(l));
-      lines = lines.filter((l) => {
-        const low = l.trim().toLowerCase();
-        if (!low) return false;
-        if (/^[\*\-\•]\s*(role|constraint|persona|option|style|input|capa)/i.test(low)) return false;
-        return true;
-      });
-      t = lines.join("\n").trim();
-      const quoted = t.match(/"([^"]{10,})"/);
-      if (quoted && !leakRe.test(quoted[1])) t = quoted[1];
-    } else {
-      t = lines.filter((l) => {
-        const low = l.trim().toLowerCase();
-        if (/^[\*\-\•]\s*(role|constraint|persona|option)/i.test(low)) return false;
-        return true;
-      }).join("\n").trim();
-    }
-    if (t.startsWith('"') && t.endsWith('"') && t.length > 2) t = t.slice(1, -1).trim();
-    t = t.replace(/\*\*([^*]+)\*\*/g, "$1").trim();
-    t = t.replace(/^\s*[\*\-\•]\s+/gm, "").trim();
-    return t.trim();
+    const lines = t.split('\n').filter(line => 
+      !/^(Role|Constraint|Instruction|Planning|Output|User says|Draft|Options|Concise):/i.test(line.trim())
+    );
+    return lines.join('\n').trim();
   }
 
   try {
-    const sysPrompt = "You are JobMatch, a helpful AI career assistant. Your purpose is to assist users with job searches, CV optimization, and interview preparation. Output ONLY the response meant for the user. Do not include internal thoughts, reasoning steps, or prompt tags like 'User says:' or 'Role:'. Keep your answers natural, friendly, and concise (1-3 sentences unless asked for details).";
+    const sysPrompt = `You are JobMatch, an expert career assistant. 
+RULES:
+1. Help with: job searches, CV optimization, interview preparation.
+2. Be extremely concise (1-2 sentences).
+3. If the user greets you, reply naturally.
+4. You MUST wrap your final response to the user in <reply> tags.
+5. Do NOT include reasoning, planning, or headers in your response.
+Example: <reply>Hello! How can I help you today?</reply>`;
     const base = (Deno.env.get("NINE_ROUTER_BASE_URL") ?? "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, "");
     const url = `${base}/chat/completions`;
     // Reduced to 2 most reliable models for faster failover
