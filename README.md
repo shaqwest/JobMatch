@@ -1,9 +1,19 @@
-# JobMatch — Senior Plan (Day 1 → Final)
+# JobMatch — Smart Job Aggregator for Indonesia
 
-> Personal Android (S23+) job aggregator for Indonesia. Free-only. English. Flutter + Supabase + 9Router (Gemini).
+> Android job aggregator for Indonesia, free-only and in English. Uses AI-powered matching to help job seekers find relevant opportunities fast.
 
-## 0. North Star
-Cards list of matched jobs → detail + apply link. Profile-first (CV upload or manual) → vector match ranking → filters → AI chat bubble. Installed via GitHub Actions signed APK.
+## Overview
+
+JobMatch aggregates free job listings from Indonesian sources (Adzuna, Arbeitnow, Remotive, JSearch) and matches them against your profile using semantic search. Upload your CV or fill out your background manually, and get ranked job suggestions with AI-powered insights — all without scraping or paying for APIs.
+
+**Key features:**
+- Vector-based job matching using embedding similarity
+- PDF CV parsing with AI extraction (Gemini Flash)
+- Smart filters: salary range, work type (WFO/Remote/Hybrid), match score
+- AI chat assistant via 9Router proxy for job-related questions
+- Daily job ingestion via scheduled Edge Functions
+
+**Target:** Indonesian job seekers on Android (S23+) who want an ad-free, free-tier-friendly job board experience.
 
 ## 1. Non-Negotiables (Senior Calls)
 - **No scraping "all internet"** — Use whitelisted free APIs only. Scraping ID boards (Glints/Jobstreet) = ToS/ban. Glassdoor rating dropped for MVP (no free legal API; use SerpAPI later).
