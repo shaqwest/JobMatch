@@ -2,9 +2,7 @@
 
 > Android job aggregator for Indonesia, free-only and in English. Uses AI-powered matching to help job seekers find relevant opportunities fast.
 
-## Overview
-
-JobMatch aggregates free job listings from Indonesian sources (Adzuna, Arbeitnow, Remotive, JSearch) and matches them against your profile using semantic search. Upload your CV or fill out your background manually, and get ranked job suggestions with AI-powered insights — all without scraping or paying for APIs.
+AI helped build this project. The codebase was developed with assistance from Google Gemini and 9Router AI.
 
 **Key features:**
 - Vector-based job matching using embedding similarity
@@ -15,7 +13,7 @@ JobMatch aggregates free job listings from Indonesian sources (Adzuna, Arbeitnow
 
 **Target:** Indonesian job seekers on Android (S23+) who want an ad-free, free-tier-friendly job board experience.
 
-## 1. Non-Negotiables (Senior Calls)
+## 1. Non-Negotiables
 - **No scraping "all internet"** — Use whitelisted free APIs only. Scraping ID boards (Glints/Jobstreet) = ToS/ban. Glassdoor rating dropped for MVP (no free legal API; use SerpAPI later).
 - **Backend owns ingestion/matching** — App is dumb UI. No on-device scraping/ML, no API keys in APK.
 - **Free-only ID reality:** ~500 jobs/mo via Adzuna (250/mo) + Arbeitnow + Remotive + JSearch free. Accept incomplete coverage. Nullable salary/benefits → show "Not disclosed".
@@ -25,7 +23,7 @@ JobMatch aggregates free job listings from Indonesian sources (Adzuna, Arbeitnow
 ## 2. Stack
 - **Mobile:** Flutter + Riverpod + go_router + dio + shimmer + flutter_dotenv (client only needs SUPABASE_URL/ANON_KEY)
 - **Backend:** Supabase (Postgres + pgvector + Auth + Storage + Edge Functions + pg_cron)
-- **AI:** 9Router Combo (gemini-2.0-flash for extract/CV/chat, text-embedding-3-small for embeddings)
+- **AI:** Google AI Studio (via OpenAI-compatible endpoint) — gemini-3.8-flash for chat, text-embedding-3-small for embeddings. Optional 9Router proxy via `NINE_ROUTER_BASE_URL` env var.
 - **CI:** GitHub Actions → `flutter build apk --release --split-per-abi` + `r0adk3y/sign-android-release` → GitHub Release (not ephemeral artifact)
 
 ## 3. Architecture
