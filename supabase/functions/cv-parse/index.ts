@@ -24,6 +24,16 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 4
   }
 }
 
+async function getAuthenticatedUser(req: Request, supabaseUrl: string, serviceKey: string) {
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) return null;
+  const res = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    headers: { Authorization: authHeader, apikey: serviceKey },
+  });
+  if (!res.ok) return null;
+  return await res.json();
+}
+
 function extractAnswerText(json: any): string {
   const parts: any[] = json?.candidates?.[0]?.content?.parts ?? [];
   return parts
@@ -101,6 +111,23 @@ async function parsePdfWithGemini(apiKey: string, systemPrompt: string, pdfBase6
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceKey) {
+    return new Response(JSON.stringify({ error: "SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  const authedUser = await getAuthenticatedUser(req, supabaseUrl, serviceKey);
+  if (!authedUser?.id) {
+    return new Response(JSON.stringify({ error: "Unauthorized: valid user session required" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   let path = "";
   try {
     const body = await req.json();
@@ -114,18 +141,16 @@ Deno.serve(async (req) => {
     });
   }
 
-  const apiKey = Deno.env.get("GOOGLE_API_KEY") ?? Deno.env.get("GEMINI_API_KEY");
-  if (!apiKey) {
-    return new Response(JSON.stringify({ error: "GOOGLE_API_KEY not set in Edge Function secrets" }), {
-      status: 500,
+  if (!path.startsWith(`${authedUser.id}/`) || path.includes("..")) {
+    return new Response(JSON.stringify({ error: "Forbidden: cannot access another user's CV folder" }), {
+      status: 403,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !serviceKey) {
-    return new Response(JSON.stringify({ error: "SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing" }), {
+  const apiKey = Deno.env.get("GOOGLE_API_KEY") ?? Deno.env.get("GEMINI_API_KEY");
+  if (!apiKey) {
+    return new Response(JSON.stringify({ error: "GOOGLE_API_KEY not set in Edge Function secrets" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -179,42 +204,37 @@ Use "" or [] when a field is missing. Never fabricate employers or skills.`;
     const match = rawJson.match(/\{[\s\S]*\}/);
     const parsed: Record<string, any> = match ? JSON.parse(match[0]) : JSON.parse(rawJson);
 
-    const parts = path.split("/");
-    const userId = parts[0];
-    const fileName = parts.slice(1).join("/") || null;
+    const fileName = path.split("/").slice(1).join("/") || null;
+    const upsertPayload: Record<string, any> = {
+      id: authedUser.id,
+      cv_url: path,
+      cv_filename: fileName,
+      cv_parsed: parsed,
+    };
 
-    if (userId) {
-      const upsertPayload: Record<string, any> = {
-        id: userId,
-        cv_url: path,
-        cv_filename: fileName,
-        cv_parsed: parsed,
-      };
-
-      const scalarFields = ["full_name", "email", "phone", "location", "headline", "summary", "education"];
-      for (const f of scalarFields) {
-        if (typeof parsed[f] === "string" && parsed[f].trim().length > 0) {
-          upsertPayload[f] = parsed[f].trim();
-        }
+    const scalarFields = ["full_name", "email", "phone", "location", "headline", "summary", "education"];
+    for (const f of scalarFields) {
+      if (typeof parsed[f] === "string" && parsed[f].trim().length > 0) {
+        upsertPayload[f] = parsed[f].trim();
       }
-      if (Array.isArray(parsed.skills)) upsertPayload.skills = parsed.skills;
-      if (Array.isArray(parsed.experience)) upsertPayload.experience = parsed.experience;
+    }
+    if (Array.isArray(parsed.skills)) upsertPayload.skills = parsed.skills;
+    if (Array.isArray(parsed.experience)) upsertPayload.experience = parsed.experience;
 
-      const dbRes = await fetch(`${supabaseUrl}/rest/v1/profiles?on_conflict=id`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: serviceKey,
-          Authorization: `Bearer ${serviceKey}`,
-          Prefer: "resolution=merge-duplicates,return=minimal",
-        },
-        body: JSON.stringify(upsertPayload),
-      });
+    const dbRes = await fetch(`${supabaseUrl}/rest/v1/profiles?on_conflict=id`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        Prefer: "resolution=merge-duplicates,return=minimal",
+      },
+      body: JSON.stringify(upsertPayload),
+    });
 
-      if (!dbRes.ok) {
-        const dbErr = await dbRes.text();
-        console.error(`[cv-parse] DB upsert failed (${dbRes.status}): ${dbErr}`);
-      }
+    if (!dbRes.ok) {
+      const dbErr = await dbRes.text();
+      console.error(`[cv-parse] DB upsert failed (${dbRes.status}): ${dbErr}`);
     }
 
     return new Response(JSON.stringify(parsed), {

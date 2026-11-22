@@ -3,7 +3,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const MODELS = ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-2.5-flash"];
+const MODELS = ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-3.8-flash"];
 
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 15000) {
   const controller = new AbortController();
@@ -13,6 +13,16 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 1
   } finally {
     clearTimeout(id);
   }
+}
+
+async function getAuthenticatedUser(req: Request, supabaseUrl: string, serviceKey: string) {
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) return null;
+  const res = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    headers: { Authorization: authHeader, apikey: serviceKey },
+  });
+  if (!res.ok) return null;
+  return await res.json();
 }
 
 function extractAnswerText(json: any): string {
@@ -82,6 +92,23 @@ async function generateChatReply(apiKey: string, systemPrompt: string, userMessa
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceKey) {
+    return new Response(JSON.stringify({ error: "Server configuration missing" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  const authedUser = await getAuthenticatedUser(req, supabaseUrl, serviceKey);
+  if (!authedUser?.id) {
+    return new Response(JSON.stringify({ error: "Unauthorized: sign in required" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 
   const apiKey = Deno.env.get("GOOGLE_API_KEY") ?? Deno.env.get("GEMINI_API_KEY");
   if (!apiKey) {

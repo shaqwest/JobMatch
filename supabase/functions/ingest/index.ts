@@ -2,10 +2,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
 };
 
-const MODELS = ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-2.5-flash"];
+const MODELS = ["gemini-3.5-flash-lite", "gemini-2.5-flash", "gemini-3.8-flash"];
 
 async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 15000) {
   const controller = new AbortController();
@@ -33,18 +33,21 @@ async function fetchArbeitnow(): Promise<any[]> {
   const r = await fetchWithTimeout("https://www.arbeitnow.com/api/job-board-api", {}, 12000);
   if (!r.ok) return [];
   const j = await r.json();
-  return (j.data ?? []).slice(0, 25).map((x: any) => ({
-    title: String(x.title ?? "Untitled Role"),
-    company: String(x.company_name ?? "Unknown Company"),
-    location: String(x.location ?? "Remote"),
-    type: x.remote ? "Remote" : "WFO",
-    employment: "full_time",
-    posted_at: toIsoTimestamp(x.created_at),
-    source: "arbeitnow",
-    description: String(x.description ?? x.title ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
-    apply_url: String(x.url ?? ""),
-    website: null,
-  })).filter((j: any) => j.apply_url.startsWith("http"));
+  return (j.data ?? [])
+    .slice(0, 25)
+    .map((x: any) => ({
+      title: String(x.title ?? "Untitled Role"),
+      company: String(x.company_name ?? "Unknown Company"),
+      location: String(x.location ?? "Remote"),
+      type: x.remote ? "Remote" : "WFO",
+      employment: "full_time",
+      posted_at: toIsoTimestamp(x.created_at),
+      source: "arbeitnow",
+      description: String(x.description ?? x.title ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+      apply_url: String(x.url ?? ""),
+      website: null,
+    }))
+    .filter((j: any) => j.apply_url.startsWith("http"));
 }
 
 async function normalizeWithGemini(apiKey: string, description: string): Promise<Record<string, any> | null> {
@@ -86,10 +89,23 @@ ${description.slice(0, 3500)}`;
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-  );
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const cronSecret = Deno.env.get("CRON_SECRET");
+  const providedCron = req.headers.get("x-cron-secret");
+  const authHeader = req.headers.get("Authorization");
+
+  const isServiceRole = Boolean(serviceKey && authHeader === `Bearer ${serviceKey}`);
+  const isValidCron = Boolean(cronSecret && providedCron === cronSecret);
+
+  if (!isServiceRole && !isValidCron) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  const supabase = createClient(supabaseUrl, serviceKey);
   const apiKey = Deno.env.get("GOOGLE_API_KEY") ?? Deno.env.get("GEMINI_API_KEY");
 
   let jobs: any[] = [];
