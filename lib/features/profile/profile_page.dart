@@ -81,7 +81,13 @@ class _ProfilePageState extends ConsumerState<ProfilePage> with SingleTickerProv
             title: const Text('My Profile', style: TextStyle(color: Color(0xFF1E293B), fontSize: 16, fontWeight: FontWeight.w600)),
             actions: [
               IconButton(
-                icon: const Icon(Icons.upload_file, color: Color(0xFF2563EB)),
+                icon: _parsing
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.upload_file, color: Color(0xFF2563EB)),
                 tooltip: 'Upload CV',
                 onPressed: _parsing ? null : _pickCv,
               ),

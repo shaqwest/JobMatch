@@ -25,7 +25,7 @@ class Experience {
       };
 
   static Experience fromJson(Map<String, dynamic> j) => Experience(
-        id: j['id'] ?? '',
+        id: j['id']?.toString() ?? '',
         company: j['company'] ?? '',
         title: j['title'] ?? '',
         duration: j['duration'] ?? '',
@@ -92,7 +92,7 @@ class Profile {
         'headline': headline,
         'summary': summary,
         'skills': skills,
-        'experience': experience.isEmpty ? '' : experience.map((e) => '${e.title} at ${e.company}'.trim()).join('\n'),
+        'experience': experience.map((e) => e.toJson()).toList(),
         'education': education,
         'pref_type': prefType,
         'cv_parsed': {

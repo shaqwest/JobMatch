@@ -1,121 +1,149 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-async function fetchArbeitnow(): Promise<any[]> {
-  const r = await fetch("https://www.arbeitnow.com/api/job-board-api");
-  if (!r.ok) return [];
-  const j = await r.json();
-  return (j.data ?? []).slice(0, 30).map((x: any) => ({
-    title: x.title,
-    company: x.company_name,
-    location: x.location ?? "Remote",
-    type: x.remote ? "Remote" : "WFO",
-    employment: "full_time",
-    posted_at: new Date(x.created_at ?? Date.now()).toISOString(),
-    source: "arbeitnow",
-    description: x.description ?? x.title,
-    apply_url: x.url,
-    website: x.company_name,
-  }));
-}
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-async function nativeGenerate(key: string, text: string, model: string): Promise<string> {
-  for (const ver of ["v1beta", "v1"]) {
+const MODELS = ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-2.5-flash"];
+
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(id);
+  }
+}
+
+function toIsoTimestamp(raw: unknown): string {
+  if (typeof raw === "number") {
+    const ms = raw < 1e12 ? raw * 1000 : raw;
+    return new Date(ms).toISOString();
+  }
+  if (typeof raw === "string" && raw.trim()) {
+    const parsed = Date.parse(raw);
+    if (!Number.isNaN(parsed)) return new Date(parsed).toISOString();
+  }
+  return new Date().toISOString();
+}
+
+async function fetchArbeitnow(): Promise<any[]> {
+  const r = await fetchWithTimeout("https://www.arbeitnow.com/api/job-board-api", {}, 12000);
+  if (!r.ok) return [];
+  const j = await r.json();
+  return (j.data ?? []).slice(0, 25).map((x: any) => ({
+    title: String(x.title ?? "Untitled Role"),
+    company: String(x.company_name ?? "Unknown Company"),
+    location: String(x.location ?? "Remote"),
+    type: x.remote ? "Remote" : "WFO",
+    employment: "full_time",
+    posted_at: toIsoTimestamp(x.created_at),
+    source: "arbeitnow",
+    description: String(x.description ?? x.title ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+    apply_url: String(x.url ?? ""),
+    website: null,
+  })).filter((j: any) => j.apply_url.startsWith("http"));
+}
+
+async function normalizeWithGemini(apiKey: string, description: string): Promise<Record<string, any> | null> {
+  const prompt = `Extract job metadata as JSON ONLY with keys:
+{"type":"WFO|Remote|Hybrid","employment":"full_time|part_time|contract","contract_duration":null,"salary_min":null,"salary_max":null,"benefits":null,"responsibilities":"concise summary","workload":null}
+Job description:
+${description.slice(0, 3500)}`;
+
+  for (const model of MODELS) {
     try {
-      const url = `https://generativelanguage.googleapis.com/${ver}/models/${model}:generateContent?key=${key}`;
-      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text }] }] }) });
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const r = await fetchWithTimeout(
+        url,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.1,
+              maxOutputTokens: 1024,
+              responseMimeType: "application/json",
+            },
+          }),
+        },
+        15000,
+      );
       if (!r.ok) continue;
       const jr = await r.json();
-      const out = jr.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (out) return out;
+      const parts: any[] = jr?.candidates?.[0]?.content?.parts ?? [];
+      const text = parts.filter((p) => !p?.thought && typeof p?.text === "string").map((p) => p.text).join("").trim();
+      const m = text.match(/\{[\s\S]*\}/);
+      if (m) return JSON.parse(m[0]);
     } catch (_) {}
   }
-  return "";
-}
-
-async function discoverModels(key: string): Promise<string[]> {
-  for (const ver of ["v1beta", "v1"]) {
-    try {
-      const r = await fetch(`https://generativelanguage.googleapis.com/${ver}/models?key=${key}`);
-      if (!r.ok) continue;
-      const j = await r.json();
-      const models: any[] = j.models ?? [];
-      const flash = models.filter((m: any) => (m.supportedGenerationMethods ?? []).includes("generateContent")).map((m: any) => (m.name ?? "").replace("models/", "")).filter((n: string) => n && !n.includes("embedding") && !n.includes("image") && !n.includes("veo") && !n.includes("tts"));
-      if (flash.length) return flash;
-    } catch (_) {}
-  }
-  return [];
-}
-
-async function normalizeWithAI(key: string, base: string, description: string): Promise<string> {
-  const prompt = `Extract JSON only: {"type":"WFO|Remote|Hybrid","employment":"full_time|part_time|contract","contract_duration":null|string,"salary_min":null|int,"salary_max":null|int,"benefits":null|string,"responsibilities":string,"workload":null|string} from: ${description.slice(0, 4000)}`;
-  const url = `${base}/chat/completions`;
-  for (const model of ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]) {
-    try {
-      const resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` }, body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], temperature: 0.2 }) });
-      if (resp.ok) {
-        const jr = await resp.json();
-        const c = jr.choices?.[0]?.message?.content ?? jr.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-        if (c) return c;
-      }
-    } catch (_) {}
-  }
-  const discovered = await discoverModels(key);
-  const fallback = discovered.length ? discovered : ["gemini-2.5-flash", "gemini-1.5-flash-latest", "gemini-pro"];
-  for (const m of fallback) {
-    const text = await nativeGenerate(key, prompt, m);
-    if (text) return text;
-  }
-  return "";
+  return null;
 }
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-  const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-  const key = Deno.env.get("NINE_ROUTER_API_KEY");
-  const baseUrl = (Deno.env.get("NINE_ROUTER_BASE_URL") ?? "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, "");
+
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  );
+  const apiKey = Deno.env.get("GOOGLE_API_KEY") ?? Deno.env.get("GEMINI_API_KEY");
 
   let jobs: any[] = [];
   try {
-    const a = await fetchArbeitnow();
-    jobs = a;
-  } catch (_) {}
-  for (const j of jobs) {
-    const { data: existing } = await supabase.from("jobs").select("id").eq("apply_url", j.apply_url).maybeSingle();
-    if (existing) continue;
-    let normalized = j;
-    if (key) {
-      try {
-        const content = await normalizeWithAI(key, baseUrl, j.description);
-        const m = content.match(/\{[\s\S]*\}/);
-        if (m) {
-          const ex = JSON.parse(m[0]);
-          normalized = { ...j, ...ex };
-        }
-      } catch (_) {}
-    }
-    await supabase.from("jobs").insert({
-      title: normalized.title,
-      company: normalized.company,
-      location: normalized.location,
-      type: ["WFO", "Remote", "Hybrid"].includes(normalized.type) ? normalized.type : "WFO",
-      employment: ["full_time", "part_time", "contract"].includes(normalized.employment) ? normalized.employment : "full_time",
-      contract_duration: normalized.contract_duration ?? null,
-      salary_min: normalized.salary_min ?? null,
-      salary_max: normalized.salary_max ?? null,
-      posted_at: normalized.posted_at,
-      source: normalized.source,
-      description: normalized.description,
-      responsibilities: normalized.responsibilities ?? null,
-      benefits: normalized.benefits ?? null,
-      workload: normalized.workload ?? null,
-      apply_url: normalized.apply_url,
-      website: normalized.website ?? null,
-    });
+    jobs = await fetchArbeitnow();
+  } catch (e) {
+    console.error("[ingest] fetchArbeitnow failed:", e);
   }
-  return new Response(JSON.stringify({ ingested: jobs.length }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+  let inserted = 0;
+  for (const j of jobs) {
+    const { data: existing } = await supabase
+      .from("jobs")
+      .select("id")
+      .eq("apply_url", j.apply_url)
+      .maybeSingle();
+
+    if (existing) continue;
+
+    let normalized = j;
+    if (apiKey) {
+      const aiFields = await normalizeWithGemini(apiKey, j.description);
+      if (aiFields) normalized = { ...j, ...aiFields };
+    }
+
+    const { error } = await supabase.from("jobs").upsert(
+      {
+        title: normalized.title,
+        company: normalized.company,
+        location: normalized.location,
+        type: ["WFO", "Remote", "Hybrid"].includes(normalized.type) ? normalized.type : j.type,
+        employment: ["full_time", "part_time", "contract"].includes(normalized.employment)
+          ? normalized.employment
+          : "full_time",
+        contract_duration: normalized.contract_duration ?? null,
+        salary_min: Number.isInteger(normalized.salary_min) ? normalized.salary_min : null,
+        salary_max: Number.isInteger(normalized.salary_max) ? normalized.salary_max : null,
+        posted_at: normalized.posted_at,
+        source: normalized.source,
+        description: normalized.description,
+        responsibilities: normalized.responsibilities ?? null,
+        benefits: normalized.benefits ?? null,
+        workload: normalized.workload ?? null,
+        apply_url: normalized.apply_url,
+        website: normalized.website ?? null,
+      },
+      { onConflict: "apply_url", ignoreDuplicates: true },
+    );
+
+    if (!error) inserted++;
+  }
+
+  return new Response(
+    JSON.stringify({ fetched: jobs.length, inserted }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+  );
 });
