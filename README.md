@@ -18,7 +18,7 @@ Built out of frustration with cluttered commercial boards (LinkedIn, Glints, Job
 
 ## 1. Engineering Trade-Offs & Design Decisions
 
-- **Direct Gemini REST API Over Third-Party Proxies:** Early iterations routed calls through an OpenAI-compatible proxy, introducing extra hops and premature timeouts on multi-page PDFs. Calling `[generativelanguage.googleapis.com/v1beta](https://generativelanguage.googleapis.com/v1beta)` directly from Deno Edge Functions enables native binary PDF ingestion (`inlineData`), deterministic `responseMimeType: "application/json"`, and automatic model fallback on HTTP `429`/`503` spikes.
+- **Direct Gemini REST API Over Third-Party Proxies:** Early iterations routed calls through an OpenAI-compatible proxy, introducing extra hops and premature timeouts on multi-page PDFs. Calling 'generativelanguage.googleapis.com/v1beta' directly from Deno Edge Functions enables native binary PDF ingestion (`inlineData`), deterministic `responseMimeType: "application/json"`, and automatic model fallback on HTTP `429`/`503` spikes.
 - **Compliant Public APIs Over DOM Scraping:** Scraping regional boards violates Terms of Service and breaks on layout changes. Ingestion uses compliant public endpoints, storing undisclosed salaries explicitly as `NULL` (surfaced in UI as `"Not disclosed"`).
 - **Defense-in-Depth on Edge Functions:** Even where browser CORS preflight requires custom Edge handling, `chat-proxy` and `cv-parse` verify the caller's `Authorization: Bearer <jwt>` against Supabase Auth and enforce path ownership (`{user.id}/`) before touching Storage or `public.profiles`.
 - **Graceful Offline/Demo Mode:** If `.env` credentials are absent, the client degrades cleanly into an interactive local demo dataset (`mockJobs()`) rather than crashing on startup.
@@ -132,4 +132,11 @@ Detailed architectural specs live in [`docs/future_feature.json`](docs/future_fe
 - [ ] **Context-Aware Career Assistant:** Inject candidate profile snapshot + top visible ranked jobs into `chat-proxy` with prompt-injection delimiters
 - [ ] **Hybrid Vector Search (`pgvector` + `tsvector` RRF):** Populate `vector(1536)` embeddings via `gemini-embedding-001` and move ranking from client lexical scoring to a server-side PostgreSQL RPC
 - [ ] **Real-Time SSE Chat Streaming:** Upgrade `chat-proxy` and `ChatNotifier` to stream tokens via `:streamGenerateContent?alt=sse`
-- [ ] **Regional APAC / Indonesia Job Adapters:** Expand `ingest` with `Remotive`, `Adzuna`, and `JSearch` adapters + automated 6-hour `pg_
+- [ ] **Regional APAC / Indonesia Job Adapters:** Expand `ingest` with `Remotive`, `Adzuna`, and `JSearch` adapters + automated 6-hour `pg__cron` scheduling
+- [ ] **Interactive Profile Editing & CV Diff Modal:** Wire manual experience CRUD and side-by-side merge review before overwriting profile fields
+
+---
+
+## License
+
+Released under the [MIT License](LICENSE).
